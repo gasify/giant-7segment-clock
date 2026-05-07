@@ -277,7 +277,11 @@ void displayDigit(int digitIndex, int value, bool isBlank = false) {
   
   if (clockMode == 1) {
     static unsigned long lastHueUpdate = 0;
-    if (millis() - lastHueUpdate > (51 - rainbowSpeed)) { hueOffset++; lastHueUpdate = millis(); }
+    // Animation speed control
+    if (millis() - lastHueUpdate > (51 - rainbowSpeed)) { 
+      hueOffset++; 
+      lastHueUpdate = millis(); 
+    }
   }
 }
 
@@ -314,38 +318,50 @@ void updateClock() {
   static bool colonState = false;
   bool blinkTriggered = false;
 
-  if (millis() - lastBlink > 500) {
-    lastBlink = millis();
-    colonState = !colonState;
-    blinkTriggered = true;
+  // Blink logic: Only occurs if NOT in rainbow mode
+  if (clockMode == 0) {
+    if (millis() - lastBlink > 500) {
+      lastBlink = millis();
+      colonState = !colonState;
+      blinkTriggered = true;
+    }
+  } else {
+    // In rainbow mode, dots are always on
+    colonState = true;
   }
 
+  // Frame rate limiter for animation to prevent flickering
+  static unsigned long lastFrame = 0;
+  unsigned long frameTime = (clockMode == 1) ? 25 : 100; // ~40 FPS for rainbow, slower for static
+
   // Logic: Refresh if time changed, if settings forced it, if we're in rainbow mode, OR if colon needs to blink
-  if (validTime && (m != lastMinute || forceRefresh || clockMode == 1 || blinkTriggered)) {
-    if (m != lastMinute) Serial.printf("[Clock] Time Update: %02d:%02d\n", h, m);
-    if (forceRefresh) Serial.println("[Clock] Applying new settings to display.");
-    
-    lastMinute = m; 
-    forceRefresh = false;
+  if (validTime && (millis() - lastFrame > frameTime)) {
+    if (m != lastMinute || forceRefresh || clockMode == 1 || blinkTriggered) {
+      if (m != lastMinute) Serial.printf("[Clock] Time Update: %02d:%02d\n", h, m);
+      if (forceRefresh) Serial.println("[Clock] Applying new settings to display.");
+      
+      lastMinute = m; 
+      forceRefresh = false;
+      lastFrame = millis();
 
-    int dh = h;
-    if (dh == 0) dh = 12; else if (dh > 12) dh -= 12;
+      int dh = h;
+      if (dh == 0) dh = 12; else if (dh > 12) dh -= 12;
 
-    FastLED.clear();
-    if (dh >= 10) displayDigit(0, 1); else displayDigit(0, 0, true);
-    displayDigit(1, dh % 10);
-    displayDigit(2, m / 10);
-    displayDigit(3, m % 10);
+      FastLED.clear();
+      if (dh >= 10) displayDigit(0, 1); else displayDigit(0, 0, true);
+      displayDigit(1, dh % 10);
+      displayDigit(2, m / 10);
+      displayDigit(3, m % 10);
 
-    CRGB colColor = colonState ? (clockMode == 1 ? CHSV(millis() / (51 - rainbowSpeed), 255, 255) : currentColor) : CRGB::Black;
-    for (int i = 0; i < 4; i++) leds[colonIndices[i]] = colColor;
+      CRGB colColor = colonState ? (clockMode == 1 ? CHSV(millis() / (51 - rainbowSpeed), 255, 255) : currentColor) : CRGB::Black;
+      for (int i = 0; i < 4; i++) leds[colonIndices[i]] = colColor;
 
-    yield(); 
-    noInterrupts(); 
-    FastLED.show(); 
-    interrupts();
+      yield(); 
+      noInterrupts(); 
+      FastLED.show(); 
+      interrupts();
+    }
   } else if (!validTime && forceRefresh) {
-    // If we have no time yet but user changed color/settings, at least clear display or show something
     Serial.println("[Clock] Force refresh ignored: No valid time source available.");
     forceRefresh = false;
   }
@@ -353,17 +369,22 @@ void updateClock() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1500); 
+  
+  // SIGNIFICANT DELAY: Wait 5 seconds for power supply to stabilize before I2C/LED init.
+  // Giant clocks often have large capacitors in the PSU that take time to charge.
+  delay(5000); 
+  
   Serial.println("\n\n--- Giant 7-Segment Clock Booting ---");
 
+  // Initialize I2C first, before LEDs are even configured.
   Serial.printf("[System] Initializing I2C on SDA:%d SCL:%d\n", SDA_PIN, SCL_PIN);
   Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(100000);
-  delay(500); 
+  Wire.setClock(100000); // Standard speed is more reliable than high speed for DS1307
+  delay(1000); // Stabilization delay for I2C bus
 
   Serial.println("[System] Initializing RTC...");
   if (!rtc.begin()) {
-    Serial.println("[RTC] ERROR: Not found.");
+    Serial.println("[RTC] ERROR: Not found. Checking if module is powered and SDA/SCL are correct.");
     rtcFound = false;
   } else {
     rtcFound = true;
@@ -372,24 +393,28 @@ void setup() {
       Serial.println("[RTC] WARNING: RTC was not running! Adjusting to compile time.");
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     }
+    DateTime now = rtc.now();
+    Serial.printf("[RTC] Current time read: %02d:%02d:%02d\n", now.hour(), now.minute(), now.second());
   }
   
+  // Load settings from EEPROM
   loadSettings();
   
+  // Initialize LEDs LAST to avoid current spikes during sensitive RTC detection
   Serial.println("[System] Initializing FastLED...");
   FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   
-  // Apply saved brightness before first show
+  // Apply saved brightness
   FastLED.setBrightness(globalBrightness);
   FastLED.clear(true); 
   FastLED.show();
-  delay(200);
+  delay(500); // Short delay to let current stabilize after clearing LEDs
 
   Serial.println("[System] Initializing WiFiManager...");
   WiFiManager wifiManager;
   wifiManager.setConfigPortalTimeout(180); 
   
-  // Note: if autoConnect hangs, clock won't update until it returns
+  // WiFiManager blocking call
   if (wifiManager.autoConnect("GiantClock-AP")) {
     Serial.println("[WiFi] Connected successfully.");
     timeClient.begin();
@@ -406,7 +431,7 @@ void setup() {
 
   // Ensure digits are drawn immediately if time is available
   forceRefresh = true; 
-  Serial.println("[System] Setup complete.");
+  Serial.println("[System] Setup complete. System entering main loop.");
 }
 
 void loop() {
