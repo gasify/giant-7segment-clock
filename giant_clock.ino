@@ -36,6 +36,7 @@ int tzMinutes = 30;
 int clockMode = 0; // 0 = Static Color, 1 = Rainbow
 int globalBrightness = 100;
 int rainbowSpeed = 5; // Default speed for rainbow animation
+uint8_t hueOffset = 0; // GLOBAL hue for synchronized animation
 
 // State tracking
 int lastMinute = -1;
@@ -249,7 +250,6 @@ void handleSyncBrowser() {
 }
 
 void displayDigit(int digitIndex, int value, bool isBlank = false) {
-  static uint8_t hueOffset = 0;
   if (isBlank) {
     for (int s = 0; s < 7; s++) {
       int startIdx = digits[digitIndex].segmentIndices[s];
@@ -265,6 +265,7 @@ void displayDigit(int digitIndex, int value, bool isBlank = false) {
     
     CRGB color;
     if (clockMode == 1) {
+      // Use global hueOffset for synced rainbow
       color = CHSV(hueOffset + (digitIndex * 32), 255, 255);
     } else {
       color = currentColor;
@@ -277,7 +278,7 @@ void displayDigit(int digitIndex, int value, bool isBlank = false) {
   
   if (clockMode == 1) {
     static unsigned long lastHueUpdate = 0;
-    // Animation speed control
+    // Animation speed control - updates the GLOBAL hueOffset
     if (millis() - lastHueUpdate > (51 - rainbowSpeed)) { 
       hueOffset++; 
       lastHueUpdate = millis(); 
@@ -353,7 +354,8 @@ void updateClock() {
       displayDigit(2, m / 10);
       displayDigit(3, m % 10);
 
-      CRGB colColor = colonState ? (clockMode == 1 ? CHSV(millis() / (51 - rainbowSpeed), 255, 255) : currentColor) : CRGB::Black;
+      // FIX: Use shared hueOffset instead of millis calculation for synchronization
+      CRGB colColor = colonState ? (clockMode == 1 ? CHSV(hueOffset, 255, 255) : currentColor) : CRGB::Black;
       for (int i = 0; i < 4; i++) leds[colonIndices[i]] = colColor;
 
       yield(); 
