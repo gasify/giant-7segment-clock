@@ -111,7 +111,7 @@ struct DigitMap {
 
 DigitMap digits[4] = {
   { -1, 114, 109, -1, -1, -1, -1 },      // Digit 0 (Hours Tens)
-  { 99, 94, 74, 79, 84, 105, 89 },       // Digit 1 (Hours Ones)
+  { 99, 94, 74, 79, 84, 104, 89 },       // Digit 1 (Hours Ones)
   { 60, 55, 35, 40, 45, 65, 50 },       // Digit 2 (Minutes Tens)
   { 25, 20, 0, 5, 10, 30, 15 }          // Digit 3 (Minutes Ones)
 };
